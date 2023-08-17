@@ -1,5 +1,5 @@
 # P1 port reader for belgian electricity meters Sagecom T211 and S211
-Software for the ESP2866 / ESP32 that sends P1 smart meter data as a string to a TCP port (with CRC checking).
+Software for the ESP8266 / ESP32 that sends P1 smart meter data as a string to a TCP port (with CRC checking).
 These meters have an open collector output, thus they require a pullup to 3.3V / 5V and an inversion of the signal (see included schematic).
 
 ### Installation instrucions
