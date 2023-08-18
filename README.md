@@ -6,6 +6,7 @@ These meters have an open collector output, thus they require a pullup to 3.3V /
 --- BOARDS ---
 - esp32 v2.0.9+
 - esp8266 v3.1.2+
+
 --- LIBRARIES ---
 - ArduinoOTA
 - Check Wi-Fi functionality for both boards
