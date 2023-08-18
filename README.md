@@ -2,6 +2,14 @@
 Software for the ESP8266 / ESP32 that sends P1 smart meter data as a string to a TCP port (with CRC checking).
 These meters have an open collector output, thus they require a pullup to 3.3V / 5V and an inversion of the signal (see included schematic).
 
+### Requirements for Arduino IDE
+--- BOARDS ---
+- esp32 v2.0.9+
+- esp8266 v3.1.2+
+--- LIBRARIES ---
+- ArduinoOTA
+- Check Wi-Fi functionality for both boards
+
 ### Installation instrucions
 - Make sure that your ESP8266 / ESP32 can be flashed from the Arduino environnment.
 - Place all files from this repository in a directory. Open the required .ino file.
