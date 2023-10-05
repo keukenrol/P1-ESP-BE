@@ -152,6 +152,21 @@ const char MAIN_page[] PROGMEM = R"=====(
           <td id=EL3R></td>
           <td>kW</td>
         </tr>
+        <tr class="active-row">
+          <td>DSMR Version</td>
+          <td id=VERS></td>
+          <td></td>
+        </tr>
+        <tr>
+          <td>Gas total consumption</td>
+          <td id=GAST></td>
+          <td>m<sup>3</sup></td>
+        </tr>
+        <tr class="active-row">
+          <td>Water total consumption</td>
+          <td id=WAST></td>
+          <td>m<sup>3</sup></td>
+        </tr>
       </table>
     </DIV>
     <SCRIPT>
@@ -169,13 +184,14 @@ const char MAIN_page[] PROGMEM = R"=====(
           {
             var ar = this.responseText.split(";");
             var mode;
-            if (ar[18] == 1)
+            if (ar[18] == 1) {
               mode = "DAY";
-            else
+            } else {
               mode = "NIGHT";
+            }
             document.getElementById("ECLT").innerHTML = parseFloat(ar[0]/1000).toFixed(3);
             document.getElementById("ECHT").innerHTML = parseFloat(ar[1]/1000).toFixed(3);
-            document.getElementById("ERLT").innerHTML = parseFloat(ar[2/1000]).toFixed(3);
+            document.getElementById("ERLT").innerHTML = parseFloat(ar[2]/1000).toFixed(3);
             document.getElementById("ERHT").innerHTML = parseFloat(ar[3]/1000).toFixed(3);
             document.getElementById("EAC").innerHTML = parseFloat(ar[4]/1000).toFixed(3);
             document.getElementById("EAR").innerHTML = parseFloat(ar[5]/1000).toFixed(3);
@@ -194,6 +210,9 @@ const char MAIN_page[] PROGMEM = R"=====(
             document.getElementById("ETAR").innerHTML = mode;
             document.getElementById("ETPC").innerHTML = parseFloat(ar[19]/1000).toFixed(3);
             document.getElementById("ETAC").innerHTML = parseFloat(ar[20]/1000).toFixed(3);
+            document.getElementById("VERS").innerHTML = parseFloat(ar[21]/10000).toFixed(4);
+            document.getElementById("GAST").innerHTML = parseFloat(ar[22]/1000).toFixed(3);
+            document.getElementById("WAST").innerHTML = parseFloat(ar[23]/1000).toFixed(3);
           }
         };
         xhttp.open("GET", "p1_data", true);
