@@ -5,11 +5,14 @@ These meters have an open collector output, thus they require a pullup to 3.3V /
 ### Requirements for Arduino IDE
 --- BOARDS ---
 - esp32 v2.0.9+
-- esp8266 v3.1.2+
+- esp8266 v3.0.2+
 
 --- LIBRARIES ---
-- ArduinoOTA
-- Check Wi-Fi functionality for both boards
+- None
+
+--- Functionality ---
+- ArduinoOTA from board package
+- Check Wi-Fi for both boards
 
 ### Installation instrucions
 - Make sure that your ESP8266 / ESP32 can be flashed from the Arduino environnment.
