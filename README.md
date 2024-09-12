@@ -31,3 +31,6 @@ Invert the input to 3.3V logic for ESP using a BC547B NPN transistor or similar:
 
 Connect GND->GND, RTS->REQ_PIN, and RxD->RX pin.
 By default, the req pin and the npn base input are on 3.3V. If this does not work, then supply 5V for these by using a level shifter from the output of the ESP for the REQ_PIN and connect the R2 to +5V.
+
+Internal connection (via circuitsonline.net):
+![image](https://www.circuitsonline.net/forum/file/36653)
