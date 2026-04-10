@@ -1,20 +1,23 @@
 /* Edit by Tim Vancauwenbergh, adaptation from https://github.com/jantenhove/P1-Meter-ESP8266/blob/master/P1Meter.ino
-ESP32 / ESP8266 node to pull data every 5 seconds from P1 port of digital meter (Sagecom T211 / S211) which sends a string of variables over TCP.
-Can be processed in node-red for example on server */
+   ESP32 / ESP8266 — reads P1 port of Belgian digital meter (Sagecom T211/S211, eMUCS-P1 v2.1)
+   Publishes a single JSON payload to ESPD1-P1/data on each changed telegram.
+   Also serves a local web page at / with a live data table. */
 
-// DSMR codes: https://maakjemeterslim.be/rails/active_storage/blobs/eyJfcmFpbHMiOnsibWVzc2FnZSI6IkJBaHBBZ0lEIiwiZXhwIjpudWxsLCJwdXIiOiJibG9iX2lkIn19--cdd9b48fd0838e89b177f03b745b23450fd8f53e/e-MUCS_P1_Ed_1_7_1.pdf?disposition=attachment
-// https://www.fluvius.be/sites/fluvius/files/2020-01/100013-handleiding-digitale-meter-elektriciteit.pdf
+// eMUCS-P1 v2.1 spec:
+// https://partner.fluvius.be/sites/fluvius/files/2025-09/digital-metering-system-emucs-p1-v2-1.pdf
 
 #include "commons.h"
 #include "CRC16.h"
-#include "html_index.h"  //Our HTML webpage contents
+#include "html_index.h"
+
+// ─── Setup ────────────────────────────────────────────────────────────────────
 
 void setup() {
   pinMode(REQ_PIN, OUTPUT);
 
-#if defined(ESP8266)  // for ESP01S this is linked to GPIO2
+#if defined(ESP8266)
   pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, HIGH);  //active low
+  digitalWrite(LED_BUILTIN, HIGH);  // active low
 #endif
 
   Serial.begin(115200);
@@ -22,20 +25,21 @@ void setup() {
 #if defined(ESP32)
   Serial2.begin(115200, SERIAL_8N1, RXD2, TXD2);
 #endif
+
   setupWifi();
-  setupOTA();
+  setupMQTT();
   setupWebServer();
 
   Serial.println("Setup complete!");
 }
 
+// ─── Wi-Fi ────────────────────────────────────────────────────────────────────
+
 void setupWifi() {
 #if defined(IP_STATIC)
-  if (!WiFi.config(local_IP, gateway, subnet, primaryDNS, secondaryDNS)) {
+  if (!WiFi.config(local_IP, gateway, subnet, primaryDNS, secondaryDNS))
     Serial.println("STA Failed to configure");
-  }
 #endif
-
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
@@ -44,50 +48,29 @@ void setupWifi() {
   }
   Serial.print("Wi-Fi connected! IP: ");
   Serial.println(WiFi.localIP());
-  setupTCP();
 }
 
-void setupTCP() {
-  if (!wifiClient.connect(host, port)) {
-    Serial.println("Connection to host failed");
-    return;
+// ─── MQTT ─────────────────────────────────────────────────────────────────────
+
+void setupMQTT() {
+  mqttClient.setBufferSize(512);  // default 256 is too small for the JSON payload
+  mqttClient.setServer(mqtt_server, mqtt_port);
+  mqttConnect();
+}
+
+void mqttConnect() {
+  if (mqttClient.connected()) return;
+  Serial.print("Connecting to MQTT...");
+  // swap for: mqttClient.connect(mqtt_client, mqtt_user, mqtt_pass)  if auth needed
+  if (mqttClient.connect(mqtt_client)) {
+    Serial.println(" connected!");
+  } else {
+    Serial.print(" failed, rc=");
+    Serial.println(mqttClient.state());
   }
-  Serial.println("Connection to host successful!");
 }
 
-void setupOTA() {
-  ArduinoOTA.onStart([]() {
-    String type;
-    if (ArduinoOTA.getCommand() == U_FLASH) {
-      type = "sketch";
-    } else {  // U_FS
-      type = "filesystem";
-    }
-    Serial.println("Start updating " + type);
-  });
-  ArduinoOTA.onEnd([]() {
-    Serial.println("\nEnd");
-  });
-  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
-  });
-  ArduinoOTA.onError([](ota_error_t error) {
-    Serial.printf("Error[%u]: ", error);
-    if (error == OTA_AUTH_ERROR) {
-      Serial.println("Auth Failed");
-    } else if (error == OTA_BEGIN_ERROR) {
-      Serial.println("Begin Failed");
-    } else if (error == OTA_CONNECT_ERROR) {
-      Serial.println("Connect Failed");
-    } else if (error == OTA_RECEIVE_ERROR) {
-      Serial.println("Receive Failed");
-    } else if (error == OTA_END_ERROR) {
-      Serial.println("End Failed");
-    }
-  });
-  ArduinoOTA.setHostname(ota_name);
-  ArduinoOTA.begin();
-}
+// ─── Web server ───────────────────────────────────────────────────────────────
 
 void setupWebServer() {
   server.on("/", handleRoot);
@@ -97,34 +80,64 @@ void setupWebServer() {
   Serial.println("Web server started!");
 }
 
-void handleNotFound() {
-  server.send(404, "text/plain", "Not found");
-}
+void handleNotFound() { server.send(404, "text/plain", "Not found"); }
 
 void handleRoot() {
-  String s = MAIN_page;              //Read HTML contents
-  server.send(200, "text/html", s);  //Send web page
+  String s = MAIN_page;
+  server.send(200, "text/html", s);
 }
 
 void data_web() {
-  server.send(200, "text/plane", sValue);
+  // Serve the JSON payload directly — the web UI can use this too if needed
+  server.send(200, "application/json", jsonPayload);
 }
 
+// ─── Publish ──────────────────────────────────────────────────────────────────
+
 void UpdateValues() {
-  sprintf(sValue, "%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d", ECLT, ECHT, ERLT, ERHT, EAC, EAR, EL1C, EL2C, EL3C, EL1R, EL2R, EL3R, EL1V, EL2V, EL3V, EL1I, EL2I, EL3I, ETAR, ETPC, ETAC, VERS, GAST, WAST);
+  // Build a compact JSON payload with all meter values
+  // floats are stored at their natural precision — no *1000 conversion needed
+  snprintf(jsonPayload, sizeof(jsonPayload),
+    "{"
+    "\"eclt\":%.3f,\"echt\":%.3f,"
+    "\"erlt\":%.3f,\"erht\":%.3f,"
+    "\"eac\":%.3f,\"ear\":%.3f,"
+    "\"el1c\":%.3f,\"el2c\":%.3f,\"el3c\":%.3f,"
+    "\"el1r\":%.3f,\"el2r\":%.3f,\"el3r\":%.3f,"
+    "\"el1v\":%.1f,\"el2v\":%.1f,\"el3v\":%.1f,"
+    "\"el1i\":%.2f,\"el2i\":%.2f,\"el3i\":%.2f,"
+    "\"etar\":%d,"
+    "\"etpc\":%.3f,\"etac\":%.3f,"
+    "\"gast\":%.3f,\"wast\":%.3f"
+    "}",
+    ECLT, ECHT, ERLT, ERHT,
+    EAC,  EAR,
+    EL1C, EL2C, EL3C,
+    EL1R, EL2R, EL3R,
+    EL1V, EL2V, EL3V,
+    EL1I, EL2I, EL3I,
+    ETAR,
+    ETPC, ETAC,
+    GAST, WAST
+  );
 
-  if (WiFi.status() != WL_CONNECTED)
-    setupWifi();
+  // Change detection — skip publish if nothing changed since last telegram
+  if (strcmp(jsonPayload, prevJsonPayload) == 0) {
+    Serial.println("No change, skipping publish.");
+    return;
+  }
+  memcpy(prevJsonPayload, jsonPayload, sizeof(jsonPayload));
 
-  if (wifiClient.connected()) {
-    Serial.println("Sending parsed data:");
-    Serial.println(sValue);
-    wifiClient.print(sValue);
-    wifiClient.flush();  //make sure all data is sent
+  // Reconnect if needed
+  if (WiFi.status() != WL_CONNECTED) setupWifi();
+  if (!mqttClient.connected()) mqttConnect();
+
+  if (mqttClient.connected()) {
+    bool ok = mqttClient.publish("ESPD1-P1/data", jsonPayload, true);  // retain=true
+    Serial.print("MQTT publish ");
+    Serial.println(ok ? "OK" : "FAILED");
   } else {
-    Serial.println("Connection to server lost, data not sent");
-    Serial.println("Trying to setup TCP connection...");
-    setupTCP();
+    Serial.println("MQTT not connected, skipping publish.");
   }
 
 #if defined(ESP8266)
@@ -134,49 +147,55 @@ void UpdateValues() {
 #endif
 }
 
+// ─── Parsing helpers ──────────────────────────────────────────────────────────
+
 bool isNumber(char* res, int len) {
   for (int i = 0; i < len; i++) {
-    if (((res[i] < '0') || (res[i] > '9')) && (res[i] != '.' && res[i] != 0)) {
+    if (((res[i] < '0') || (res[i] > '9')) && res[i] != '.' && res[i] != 0)
       return false;
-    }
   }
   return true;
 }
 
 int FindCharInArrayRev(char array[], char c, int len) {
-  for (int i = len - 1; i >= 0; i--) {
-    if (array[i] == c) {
-      return i;
-    }
-  }
+  for (int i = len - 1; i >= 0; i--)
+    if (array[i] == c) return i;
   return -1;
 }
 
-long getValidVal(long valNew, long valOld, long maxDiffer) {
-  //check if the incoming value is valid
-  if (valOld > 0 && ((valNew - valOld > maxDiffer) && (valOld - valNew > maxDiffer)))
-    return valOld;
-  return valNew;
+int FindCharInArray(char array[], char c, int len) {
+  for (int i = 0; i < len; i++)
+    if (array[i] == c) return i;
+  return -1;
 }
 
-long getValue(char* buffer, int maxlen) {
+// Returns float directly — no *1000 storage trick needed anymore
+float getValue(char* buffer, int maxlen) {
   int s = FindCharInArrayRev(buffer, '(', maxlen - 2);
   if (s < 8) return 0;
   if (s > 32) s = 32;
   int l = FindCharInArrayRev(buffer, '*', maxlen - 2) - s - 1;
-  if (l < 4) return 0;
-  if (l > 12) return 0;
+  if (l < 4 || l > 12) return 0;
   char res[16];
   memset(res, 0, sizeof(res));
-
-  if (strncpy(res, buffer + s + 1, l)) {
-    if (isNumber(res, l)) {
-      return (1000 * atof(res));
-    }
-  }
-  return 0;
+  strncpy(res, buffer + s + 1, l);
+  return isNumber(res, l) ? atof(res) : 0;
 }
 
+// For 1-0:1.6.0 peak demand: format is (value*kW)(timestamp)
+// Must find the FIRST '(' not the last — otherwise lands on the timestamp group
+float getFirstValue(char* buffer, int maxlen) {
+  int s = FindCharInArray(buffer, '(', maxlen - 2);
+  if (s < 8) return 0;
+  int l = FindCharInArrayRev(buffer, '*', maxlen - 2) - s - 1;
+  if (l < 1 || l > 12) return 0;
+  char res[16];
+  memset(res, 0, sizeof(res));
+  strncpy(res, buffer + s + 1, l);
+  return isNumber(res, l) ? atof(res) : 0;
+}
+
+// For values without a unit marker (*), e.g. tariff indicator
 long getValueWithoutStar(char* buffer, int maxlen) {
   int s = FindCharInArrayRev(buffer, '(', maxlen - 2);
   if (s < 8) return 0;
@@ -185,171 +204,113 @@ long getValueWithoutStar(char* buffer, int maxlen) {
   int l = e - s - 1;
   char res[16];
   memset(res, 0, sizeof(res));
-
-  if (strncpy(res, buffer + s + 1, l)) {
-    if (isNumber(res, l)) {
-      return atof(res);
-    }
-  }
-  return 0;
+  strncpy(res, buffer + s + 1, l);
+  return isNumber(res, l) ? (long)atof(res) : 0;
 }
 
+// ─── Telegram decoder ─────────────────────────────────────────────────────────
+
 bool decodeTelegram(int len) {
-  //need to check for start
   int startChar = FindCharInArrayRev(telegram, '/', len);
-  int endChar = FindCharInArrayRev(telegram, '!', len);
+  int endChar   = FindCharInArrayRev(telegram, '!', len);
   bool validCRCFound = false;
+
   if (startChar >= 0) {
-    //start found. Reset CRC calculation
     currentCRC = CRC16(0x0000, (unsigned char*)telegram + startChar, len - startChar);
-    if (outputOnSerial) {
-      for (int cnt = startChar; cnt < len - startChar; cnt++)
-        Serial.print(telegram[cnt]);
-    }
+    if (outputOnSerial)
+      for (int i = startChar; i < len; i++) Serial.print(telegram[i]);
 
   } else if (endChar >= 0) {
-    //add to crc calc
     currentCRC = CRC16(currentCRC, (unsigned char*)telegram + endChar, 1);
     char messageCRC[5];
     strncpy(messageCRC, telegram + endChar + 1, 4);
-    messageCRC[4] = 0;  //thanks to HarmOtten (issue 5)
-    if (outputOnSerial) {
-      for (int cnt = 0; cnt < len; cnt++)
-        Serial.print(telegram[cnt]);
-    }
+    messageCRC[4] = 0;
+    if (outputOnSerial)
+      for (int i = 0; i < len; i++) Serial.print(telegram[i]);
     validCRCFound = (strtol(messageCRC, NULL, 16) == currentCRC);
-    if (validCRCFound)
-      Serial.println("\nVALID CRC FOUND!");
-    else
-      Serial.println("\n===INVALID CRC FOUND!===");
+    Serial.println(validCRCFound ? "\nVALID CRC FOUND!" : "\n===INVALID CRC FOUND!===");
     currentCRC = 0;
+
   } else {
     currentCRC = CRC16(currentCRC, (unsigned char*)telegram, len);
-    if (outputOnSerial) {
-      for (int cnt = 0; cnt < len; cnt++)
-        Serial.print(telegram[cnt]);
-    }
+    if (outputOnSerial)
+      for (int i = 0; i < len; i++) Serial.print(telegram[i]);
   }
 
-  if (strncmp(telegram, "1-0:1.8.1", strlen("1-0:1.8.1")) == 0)
-    ECLT = getValue(telegram, len);
+  // Cumulative energy
+  if (strncmp(telegram, "1-0:1.8.1",  9)  == 0) ECLT = getValue(telegram, len);
+  if (strncmp(telegram, "1-0:1.8.2",  9)  == 0) ECHT = getValue(telegram, len);
+  if (strncmp(telegram, "1-0:2.8.1",  9)  == 0) ERLT = getValue(telegram, len);
+  if (strncmp(telegram, "1-0:2.8.2",  9)  == 0) ERHT = getValue(telegram, len);
 
-  if (strncmp(telegram, "1-0:1.8.2", strlen("1-0:1.8.2")) == 0)
-    ECHT = getValue(telegram, len);
+  // Actual power
+  if (strncmp(telegram, "1-0:1.7.0",  9)  == 0) EAC  = getValue(telegram, len);
+  if (strncmp(telegram, "1-0:2.7.0",  9)  == 0) EAR  = getValue(telegram, len);
+  if (strncmp(telegram, "1-0:21.7.0", 10) == 0) EL1C = getValue(telegram, len);
+  if (strncmp(telegram, "1-0:41.7.0", 10) == 0) EL2C = getValue(telegram, len);
+  if (strncmp(telegram, "1-0:61.7.0", 10) == 0) EL3C = getValue(telegram, len);
+  if (strncmp(telegram, "1-0:22.7.0", 10) == 0) EL1R = getValue(telegram, len);
+  if (strncmp(telegram, "1-0:42.7.0", 10) == 0) EL2R = getValue(telegram, len);
+  if (strncmp(telegram, "1-0:62.7.0", 10) == 0) EL3R = getValue(telegram, len);
 
-  if (strncmp(telegram, "1-0:2.8.1", strlen("1-0:2.8.1")) == 0)
-    ERLT = getValue(telegram, len);
+  // Voltage and current
+  if (strncmp(telegram, "1-0:32.7.0", 10) == 0) EL1V = getValue(telegram, len);
+  if (strncmp(telegram, "1-0:52.7.0", 10) == 0) EL2V = getValue(telegram, len);
+  if (strncmp(telegram, "1-0:72.7.0", 10) == 0) EL3V = getValue(telegram, len);
+  if (strncmp(telegram, "1-0:31.7.0", 10) == 0) EL1I = getValue(telegram, len);
+  if (strncmp(telegram, "1-0:51.7.0", 10) == 0) EL2I = getValue(telegram, len);
+  if (strncmp(telegram, "1-0:71.7.0", 10) == 0) EL3I = getValue(telegram, len);
 
-  if (strncmp(telegram, "1-0:2.8.2", strlen("1-0:2.8.2")) == 0)
-    ERHT = getValue(telegram, len);
+  // Tariff and demand
+  if (strncmp(telegram, "0-0:96.14.0", 11) == 0) ETAR = (int)getValueWithoutStar(telegram, len);
+  if (strncmp(telegram, "1-0:1.4.0",   9)  == 0) ETAC = getValue(telegram, len);
+  if (strncmp(telegram, "1-0:1.6.0",   9)  == 0) ETPC = getFirstValue(telegram, len);  // (value*kW)(timestamp)
 
-  if (strncmp(telegram, "1-0:1.7.0", strlen("1-0:1.7.0")) == 0)
-    EAC = getValue(telegram, len);
+  // Meter identifiers (not published to MQTT but kept for future use)
+  if (strncmp(telegram, "0-0:96.1.4", 10) == 0) MEID = getValueWithoutStar(telegram, len);
+  if (strncmp(telegram, "0-0:96.1.1", 10) == 0) MESN = getValueWithoutStar(telegram, len);
+  if (strncmp(telegram, "0-0:1.0.0",  9)  == 0) METS = getValueWithoutStar(telegram, len);
 
-  if (strncmp(telegram, "1-0:2.7.0", strlen("1-0:2.7.0")) == 0)
-    EAR = getValue(telegram, len);
-
-
-  if (strncmp(telegram, "1-0:21.7.0", strlen("1-0:21.7.0")) == 0)
-    EL1C = getValue(telegram, len);
-
-  if (strncmp(telegram, "1-0:41.7.0", strlen("1-0:41.7.0")) == 0)
-    EL2C = getValue(telegram, len);
-
-  if (strncmp(telegram, "1-0:61.7.0", strlen("1-0:61.7.0")) == 0)
-    EL3C = getValue(telegram, len);
-
-  if (strncmp(telegram, "1-0:22.7.0", strlen("1-0:22.7.0")) == 0)
-    EL1R = getValue(telegram, len);
-
-  if (strncmp(telegram, "1-0:42.7.0", strlen("1-0:42.7.0")) == 0)
-    EL2R = getValue(telegram, len);
-
-  if (strncmp(telegram, "1-0:62.7.0", strlen("1-0:62.7.0")) == 0)
-    EL3R = getValue(telegram, len);
-
-
-  if (strncmp(telegram, "1-0:32.7.0", strlen("1-0:32.7.0")) == 0)
-    EL1V = getValue(telegram, len);
-
-  if (strncmp(telegram, "1-0:52.7.0", strlen("1-0:52.7.0")) == 0)
-    EL2V = getValue(telegram, len);
-
-  if (strncmp(telegram, "1-0:72.7.0", strlen("1-0:72.7.0")) == 0)
-    EL3V = getValue(telegram, len);
-
-  if (strncmp(telegram, "1-0:31.7.0", strlen("1-0:31.7.0")) == 0)
-    EL1I = getValue(telegram, len);
-
-  if (strncmp(telegram, "1-0:51.7.0", strlen("1-0:51.7.0")) == 0)
-    EL2I = getValue(telegram, len);
-
-  if (strncmp(telegram, "1-0:71.7.0", strlen("1-0:71.7.0")) == 0)
-    EL3I = getValue(telegram, len);
-
-
-  if (strncmp(telegram, "0-0:96.14.0", strlen("0-0:96.14.0")) == 0)
-    ETAR = getValueWithoutStar(telegram, len);
-
-  if (strncmp(telegram, "0-0:96.1.4", strlen("0-0:96.1.4")) == 0)
-    MEID = getValueWithoutStar(telegram, len);
-
-  if (strncmp(telegram, "0-0:96.1.1", strlen("0-0:96.1.1")) == 0)
-    MESN = getValueWithoutStar(telegram, len);
-
-  if (strncmp(telegram, "0-0:1.0.0", strlen("0-0:1.0.0")) == 0)
-    METS = getValueWithoutStar(telegram, len);
-
-  if (strncmp(telegram, "1-0:1.4.0", strlen("1-0:1.4.0")) == 0)
-    ETAC = getValue(telegram, len);
-
-  if (strncmp(telegram, "1-0:1.6.0", strlen("1-0:1.6.0")) == 0)
-    ETPC = getValue(telegram, len);
-
-
-  if (strncmp(telegram, "0-0:96.1.4", strlen("0-0:96.1.4")) == 0)
-    VERS = getValueWithoutStar(telegram, len);
-
-  if (strncmp(telegram, "0-1:24.2.3", strlen("0-1:24.2.3")) == 0)
-    GAST = getValue(telegram, len);
-  
-  if (strncmp(telegram, "0-2:24.2.1", strlen("0-2:24.2.1")) == 0)
-    WAST = getValue(telegram, len);
+  // Gas and water
+  if (strncmp(telegram, "0-1:24.2.3", 10) == 0) GAST = getValue(telegram, len);
+  if (strncmp(telegram, "0-2:24.2.1", 10) == 0) WAST = getValue(telegram, len);
 
   return validCRCFound;
 }
 
+// ─── Serial reader ────────────────────────────────────────────────────────────
+
 void readTelegram() {
 #if defined(ESP32)
-  if (Serial2.available()) {
+  if (!Serial2.available()) return;
 #else
-  if (Serial.available()) {
+  if (!Serial.available()) return;
 #endif
-    digitalWrite(REQ_PIN, LOW);
-    memset(telegram, 0, sizeof(telegram));
+
+  digitalWrite(REQ_PIN, LOW);
+  memset(telegram, 0, sizeof(telegram));
+
 #if defined(ESP32)
-    while (Serial2.available()) {
-      int len = Serial2.readBytesUntil('\n', telegram, MAXLINELENGTH);
+  while (Serial2.available()) {
+    int len = Serial2.readBytesUntil('\n', telegram, MAXLINELENGTH);
 #else
-    while (Serial.available()) {
-      int len = Serial.readBytesUntil('\n', telegram, MAXLINELENGTH);
+  while (Serial.available()) {
+    int len = Serial.readBytesUntil('\n', telegram, MAXLINELENGTH);
 #endif
-      telegram[len] = '\n';
-      telegram[len + 1] = 0;
-      yield();
-      if (decodeTelegram(len + 1)) {
-        UpdateValues();
-      }
-    }
+    telegram[len]     = '\n';
+    telegram[len + 1] = 0;
+    yield();
+    if (decodeTelegram(len + 1)) UpdateValues();
   }
 }
 
+// ─── Main loop ────────────────────────────────────────────────────────────────
+
 void loop() {
-  ArduinoOTA.handle();
   server.handleClient();
+  mqttClient.loop();
 
   currentTime = millis();
-
   if ((currentTime - lastTime) >= period) {
     lastTime = currentTime;
     digitalWrite(REQ_PIN, HIGH);
