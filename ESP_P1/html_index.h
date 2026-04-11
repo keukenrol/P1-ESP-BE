@@ -50,6 +50,7 @@ const char MAIN_page[] PROGMEM = R"=====(
           </tr>
         </thead>
         <tbody>
+          <tr><td>DSMR version</td><td id="DSMR"></td><td></td></tr>
           <tr><td>Tariff mode</td><td id="ETAR"></td><td></td></tr>
           <tr class="active-row"><td>Daytime consumption</td><td id="ECLT"></td><td>kWh</td></tr>
           <tr><td>Nighttime consumption</td><td id="ECHT"></td><td>kWh</td></tr>
@@ -78,6 +79,7 @@ const char MAIN_page[] PROGMEM = R"=====(
     </DIV>
     <SCRIPT>
       setInterval(getData, 3000);
+      getData();
 
       function getData() {
         var xhttp = new XMLHttpRequest();
@@ -94,6 +96,7 @@ const char MAIN_page[] PROGMEM = R"=====(
           // Validate a required key is present before updating the UI
           if (typeof d.eac === "undefined") return;
 
+          document.getElementById("DSMR").innerHTML = d.dsmr;
           document.getElementById("ETAR").innerHTML = (d.etar === 1) ? "DAY" : "NIGHT";
           document.getElementById("ECLT").innerHTML = d.eclt.toFixed(3);
           document.getElementById("ECHT").innerHTML = d.echt.toFixed(3);

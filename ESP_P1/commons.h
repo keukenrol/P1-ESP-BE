@@ -39,6 +39,7 @@ const char*    password    = "YOUR_PASS";
 const char*    mqtt_server = "192.168.0.20";
 const uint16_t mqtt_port   = 1883;
 const char*    mqtt_client = "ESP-P1";
+#define MQTT_RETRY_INTERVAL 5000UL
 // const char* mqtt_user   = "user";  // uncomment if broker requires auth
 // const char* mqtt_pass   = "pass";
 
@@ -86,9 +87,10 @@ long  METS = 0;  // meter telegram timestamp
 
 float GAST = 0;  // gas total   (m3)
 float WAST = 0;  // water total (m3)
+char  DSMR_VER[8] = "unknown";  // P1 version e.g. "50221" = DSMR5.0 eMUCS2.1
 
 char telegram[MAXLINELENGTH];
-char jsonPayload[JSONLENGTH]     = "{\"eclt\":0.000,\"echt\":0.000,\"erlt\":0.000,\"erht\":0.000,\"eac\":0.000,\"ear\":0.000,\"el1c\":0.000,\"el2c\":0.000,\"el3c\":0.000,\"el1r\":0.000,\"el2r\":0.000,\"el3r\":0.000,\"el1v\":0.0,\"el2v\":0.0,\"el3v\":0.0,\"el1i\":0.00,\"el2i\":0.00,\"el3i\":0.00,\"etar\":0,\"etpc\":0.000,\"etac\":0.000,\"gast\":0.000,\"wast\":0.000}";
+char jsonPayload[JSONLENGTH]     = "{\"eclt\":0.000,\"echt\":0.000,\"erlt\":0.000,\"erht\":0.000,\"eac\":0.000,\"ear\":0.000,\"el1c\":0.000,\"el2c\":0.000,\"el3c\":0.000,\"el1r\":0.000,\"el2r\":0.000,\"el3r\":0.000,\"el1v\":0.0,\"el2v\":0.0,\"el3v\":0.0,\"el1i\":0.00,\"el2i\":0.00,\"el3i\":0.00,\"etar\":0,\"etpc\":0.000,\"etac\":0.000,\"gast\":0.000,\"wast\":0.000,\"dsmr\":\"unknown\"}";
 char prevJsonPayload[JSONLENGTH] = "";  // empty so first real telegram always publishes
 
 const bool outputOnSerial = false;
@@ -96,6 +98,7 @@ unsigned int  currentCRC = 0;
 unsigned long currentTime = 0;
 unsigned long lastTime    = 0;
 const unsigned long period = TIME_INTERVAL * 1000;
+unsigned long lastMqttRetry  = 0;
 
 WiFiClient   wifiClient;
 PubSubClient mqttClient(wifiClient);

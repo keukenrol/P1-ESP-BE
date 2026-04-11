@@ -60,6 +60,9 @@ void setupMQTT() {
 
 void mqttConnect() {
   if (mqttClient.connected()) return;
+  unsigned long now = millis();
+  if (now - lastMqttRetry < MQTT_RETRY_INTERVAL) return;
+  lastMqttRetry = now;
   Serial.print("Connecting to MQTT...");
   // swap for: mqttClient.connect(mqtt_client, mqtt_user, mqtt_pass)  if auth needed
   if (mqttClient.connect(mqtt_client)) {
@@ -108,7 +111,8 @@ void UpdateValues() {
     "\"el1i\":%.2f,\"el2i\":%.2f,\"el3i\":%.2f,"
     "\"etar\":%d,"
     "\"etpc\":%.3f,\"etac\":%.3f,"
-    "\"gast\":%.3f,\"wast\":%.3f"
+    "\"gast\":%.3f,\"wast\":%.3f,"
+    "\"dsmr\":\"%s\""
     "}",
     ECLT, ECHT, ERLT, ERHT,
     EAC,  EAR,
@@ -118,7 +122,8 @@ void UpdateValues() {
     EL1I, EL2I, EL3I,
     ETAR,
     ETPC, ETAC,
-    GAST, WAST
+    GAST, WAST,
+    DSMR_VER
   );
 
   // Change detection — skip publish if nothing changed since last telegram
@@ -237,11 +242,24 @@ bool decodeTelegram(int len) {
       for (int i = 0; i < len; i++) Serial.print(telegram[i]);
   }
 
+  // DSMR version — OBIS 0-0:96.1.4, octet-string A5, value e.g. "50221" = DSMR5.0 eMUCS2.1
+  if (strncmp(telegram, "0-0:96.1.4", 10) == 0) {
+    int s = FindCharInArrayRev(telegram, '(', len - 2);
+    int e = FindCharInArrayRev(telegram, ')', len - 2);
+    if (s >= 0 && e > s) {
+      int l = e - s - 1;
+      if (l > 0 && l < 8) {
+        memset(DSMR_VER, 0, sizeof(DSMR_VER));
+        strncpy(DSMR_VER, telegram + s + 1, l);
+      }
+    }
+  }
+
   // Cumulative energy
-  if (strncmp(telegram, "1-0:1.8.1",  9)  == 0) ECLT = getValue(telegram, len);
-  if (strncmp(telegram, "1-0:1.8.2",  9)  == 0) ECHT = getValue(telegram, len);
-  if (strncmp(telegram, "1-0:2.8.1",  9)  == 0) ERLT = getValue(telegram, len);
-  if (strncmp(telegram, "1-0:2.8.2",  9)  == 0) ERHT = getValue(telegram, len);
+  if (strncmp(telegram, "1-0:1.8.1",  9)  == 0) ECHT = getValue(telegram, len);  // tariff 1 = day in Belgium
+  if (strncmp(telegram, "1-0:1.8.2",  9)  == 0) ECLT = getValue(telegram, len);  // tariff 2 = night in Belgium
+  if (strncmp(telegram, "1-0:2.8.1",  9)  == 0) ERHT = getValue(telegram, len);  // tariff 1 = day in Belgium
+  if (strncmp(telegram, "1-0:2.8.2",  9)  == 0) ERLT = getValue(telegram, len);  // tariff 2 = night in Belgium
 
   // Actual power
   if (strncmp(telegram, "1-0:1.7.0",  9)  == 0) EAC  = getValue(telegram, len);
@@ -264,7 +282,7 @@ bool decodeTelegram(int len) {
   // Tariff and demand
   if (strncmp(telegram, "0-0:96.14.0", 11) == 0) ETAR = (int)getValueWithoutStar(telegram, len);
   if (strncmp(telegram, "1-0:1.4.0",   9)  == 0) ETAC = getValue(telegram, len);
-  if (strncmp(telegram, "1-0:1.6.0",   9)  == 0) ETPC = getFirstValue(telegram, len);  // (value*kW)(timestamp)
+  if (strncmp(telegram, "1-0:1.6.0",   9)  == 0) ETPC = getValue(telegram, len);  // (timestamp)(value*kW)
 
   // Meter identifiers (not published to MQTT but kept for future use)
   if (strncmp(telegram, "0-0:96.1.4", 10) == 0) MEID = getValueWithoutStar(telegram, len);
@@ -322,4 +340,8 @@ void loop() {
   }
 
   readTelegram();
+
+  if (WiFi.status() == WL_CONNECTED && !mqttClient.connected()) {
+    mqttConnect();
+  }
 }
