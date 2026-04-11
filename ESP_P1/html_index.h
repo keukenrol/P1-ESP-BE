@@ -52,8 +52,8 @@ const char MAIN_page[] PROGMEM = R"=====(
         <tbody>
           <tr><td>DSMR version</td><td id="DSMR"></td><td></td></tr>
           <tr><td>Tariff mode</td><td id="ETAR"></td><td></td></tr>
-          <tr class="active-row"><td>Daytime consumption</td><td id="ECLT"></td><td>kWh</td></tr>
-          <tr><td>Nighttime consumption</td><td id="ECHT"></td><td>kWh</td></tr>
+          <tr class="active-row"><td>Daytime consumption</td><td id="ECHT"></td><td>kWh</td></tr>
+          <tr><td>Nighttime consumption</td><td id="ECLT"></td><td>kWh</td></tr>
           <tr class="active-row"><td>Actual avg. 15' consumption</td><td id="ETAC"></td><td>kW</td></tr>
           <tr><td>Peak avg. 15' consumption</td><td id="ETPC"></td><td>kW</td></tr>
           <tr class="active-row"><td>Actual consumption</td><td id="EAC"></td><td>kW</td></tr>
@@ -66,8 +66,8 @@ const char MAIN_page[] PROGMEM = R"=====(
           <tr><td>Phase 1 actual voltage</td><td id="EL1V"></td><td>V</td></tr>
           <tr class="active-row"><td>Phase 2 actual voltage</td><td id="EL2V"></td><td>V</td></tr>
           <tr><td>Phase 3 actual voltage</td><td id="EL3V"></td><td>V</td></tr>
-          <tr class="active-row"><td>Daytime return</td><td id="ERLT"></td><td>kWh</td></tr>
-          <tr><td>Nighttime return</td><td id="ERHT"></td><td>kWh</td></tr>
+          <tr class="active-row"><td>Daytime return</td><td id="ERHT"></td><td>kWh</td></tr>
+          <tr><td>Nighttime return</td><td id="ERLT"></td><td>kWh</td></tr>
           <tr class="active-row"><td>Actual return</td><td id="EAR"></td><td>kW</td></tr>
           <tr><td>Phase 1 actual return</td><td id="EL1R"></td><td>kW</td></tr>
           <tr class="active-row"><td>Phase 2 actual return</td><td id="EL2R"></td><td>kW</td></tr>
