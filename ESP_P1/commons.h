@@ -29,7 +29,7 @@ ESP8266WebServer server(80);
 
 //#define USE_LED 1  // comment out if you don't want the LED to flash on publish
 
-#define REQ_PIN 0        // GPIO0 -> ESP01S / ESP8266 D3 / ESP32 firebeetle
+#define REQ_PIN 2        // GPIO2 -> ESP01S / ESP8266 D3 / ESP32 firebeetle
 #define TIME_INTERVAL 1  // read interval in seconds
 
 #define IP_STATIC 1  // comment out to use DHCP
