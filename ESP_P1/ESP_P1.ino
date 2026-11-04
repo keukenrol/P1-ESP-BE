@@ -36,16 +36,9 @@ void setup() {
 // ─── Wi-Fi ────────────────────────────────────────────────────────────────────
 
 void setupWifi() {
-#if defined(IP_STATIC)
-  if (!WiFi.config(local_IP, gateway, subnet, primaryDNS, secondaryDNS))
-    Serial.println("STA Failed to configure");
-#endif
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.println("Waiting for Wi-Fi...");
-  }
+  // Joins the saved network; if there is no config or the join fails, this starts the
+  // setup hotspot and does not return until the user saved settings (device then reboots).
+  portal.begin();
   Serial.print("Wi-Fi connected! IP: ");
   Serial.println(WiFi.localIP());
 }
@@ -53,8 +46,9 @@ void setupWifi() {
 // ─── MQTT ─────────────────────────────────────────────────────────────────────
 
 void setupMQTT() {
-  mqttClient.setBufferSize(512);  // default 256 is too small for the JSON payload
-  mqttClient.setServer(mqtt_server, mqtt_port);
+  mqttClient.setBufferSize(JSONLENGTH);  // default 256 is too small for payload + topic
+  mqttClientId = portal.deviceId();      // unique per chip (identical client ids kick each other off)
+  mqttClient.setServer(portal.cfg.server, portal.cfg.port);
   mqttConnect();
 }
 
@@ -64,8 +58,8 @@ void mqttConnect() {
   if (now - lastMqttRetry < MQTT_RETRY_INTERVAL) return;
   lastMqttRetry = now;
   Serial.print("Connecting to MQTT...");
-  // swap for: mqttClient.connect(mqtt_client, mqtt_user, mqtt_pass)  if auth needed
-  if (mqttClient.connect(mqtt_client)) {
+  // swap for: mqttClient.connect(id, user, pass)  if auth needed
+  if (mqttClient.connect(mqttClientId.c_str())) {
     Serial.println(" connected!");
   } else {
     Serial.print(" failed, rc=");
@@ -133,12 +127,11 @@ void UpdateValues() {
   }
   memcpy(prevJsonPayload, jsonPayload, sizeof(jsonPayload));
 
-  // Reconnect if needed
-  if (WiFi.status() != WL_CONNECTED) setupWifi();
+  // Reconnect if needed (WiFi auto-reconnects; loop() restarts the device if it stays down)
   if (!mqttClient.connected()) mqttConnect();
 
   if (mqttClient.connected()) {
-    bool ok = mqttClient.publish("ESPD1-P1/data", jsonPayload, true);  // retain=true
+    bool ok = mqttClient.publish(portal.cfg.topic, jsonPayload, true);  // retain=true
     Serial.print("MQTT publish ");
     Serial.println(ok ? "OK" : "FAILED");
   } else {
@@ -327,6 +320,16 @@ void readTelegram() {
 void loop() {
   server.handleClient();
   mqttClient.loop();
+  portal.loopButton();  // hold GPIO0 low for 5 s -> reboot into the setup hotspot
+
+  // WiFi watchdog: after 10 min offline, reboot (comes back up in the portal if the saved network is gone)
+  static unsigned long wifiDownSince = 0;
+  if (WiFi.status() != WL_CONNECTED) {
+    if (!wifiDownSince) wifiDownSince = millis();
+    else if (millis() - wifiDownSince > 600000UL) ESP.restart();
+  } else {
+    wifiDownSince = 0;
+  }
 
   currentTime = millis();
   if ((currentTime - lastTime) >= period) {

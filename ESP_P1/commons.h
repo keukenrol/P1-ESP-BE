@@ -21,6 +21,7 @@ ESP8266WebServer server(80);
 #endif
 
 #include <PubSubClient.h>
+#include "ConfigPortal.h"
 
 #define MAXLINELENGTH 512
 #define JSONLENGTH    768  // enough for the full JSON payload
@@ -32,24 +33,12 @@ ESP8266WebServer server(80);
 #define REQ_PIN 2        // GPIO2 -> ESP01S / ESP8266 D3 / ESP32 firebeetle
 #define TIME_INTERVAL 1  // read interval in seconds
 
-#define IP_STATIC 1  // comment out to use DHCP
-
-const char*    ssid        = "YOUR_SSID";
-const char*    password    = "YOUR_PASS";
-const char*    mqtt_server = "192.168.0.20";
-const uint16_t mqtt_port   = 1883;
-const char*    mqtt_client = "ESP-P1";
+// WiFi / IP / MQTT server+port+topic are no longer set here:
+// they are entered through the setup hotspot (see ConfigPortal.h) and stored in flash.
+ConfigPortal portal;
+String       mqttClientId;   // unique per chip, filled in setupMQTT()
 #define MQTT_RETRY_INTERVAL 5000UL
-// const char* mqtt_user   = "user";  // uncomment if broker requires auth
-// const char* mqtt_pass   = "pass";
-
-#if defined(IP_STATIC)
-IPAddress local_IP(192, 168, 0, 21);
-IPAddress gateway(192, 168, 0, 1);
-IPAddress subnet(255, 255, 255, 0);
-IPAddress primaryDNS(195, 130, 130, 1);
-IPAddress secondaryDNS(195, 130, 131, 1);
-#endif
+// MQTT auth: if your broker needs it, use mqttClient.connect(id, user, pass) in mqttConnect()
 
 /* END EDIT ITEMS ========================== */
 
