@@ -11,7 +11,7 @@ These meters have an open collector output, thus they require a pullup to 3.3V /
 - None
 
 --- Functionality ---
-- ArduinoOTA from board package
+- ̶A̶r̶d̶u̶i̶n̶o̶O̶T̶A̶ ̶f̶r̶o̶m̶ ̶b̶o̶a̶r̶d̶ ̶p̶a̶c̶k̶a̶g̶e
 - Check Wi-Fi for both boards
 
 ### Installation instrucions
