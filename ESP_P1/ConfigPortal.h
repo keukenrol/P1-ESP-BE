@@ -37,6 +37,7 @@ struct NetConfig {
   char     gw[16];
   char     mask[16];
   char     dns[16];
+  uint8_t  led;           // 1 = blink LED on every telegram (kept last so older saved configs stay valid)
 };
 
 class ConfigPortal {
@@ -88,9 +89,11 @@ class ConfigPortal {
       memset(&cfg, 0, sizeof(cfg));
       cfg.useDhcp = 1;
       cfg.port = 1883;
+      cfg.led = 1;
       strcpy(cfg.topic, PORTAL_DEFAULT_TOPIC);
       return false;
     }
+    if (cfg.led > 1) cfg.led = 1;  // field absent in configs saved by an older firmware -> default on
     cfg.ssid[32] = cfg.pass[64] = cfg.server[64] = cfg.topic[64] = 0;
     cfg.ip[15] = cfg.gw[15] = cfg.mask[15] = cfg.dns[15] = 0;
     if (!cfg.topic[0]) strcpy(cfg.topic, PORTAL_DEFAULT_TOPIC);
@@ -198,6 +201,11 @@ class ConfigPortal {
     h += field("Server (host or IP)", "server", cfg.server, "maxlength='64' required");
     h += field("Port", "port", String(cfg.port).c_str(), "type='number' min='1' max='65535'");
     h += field("Topic", "topic", cfg.topic, "maxlength='64'");
+    h += F("<h3>Status LED</h3><label>Blink on every telegram<select name='led'><option value='1'");
+    if (cfg.led) h += F(" selected");
+    h += F(">On</option><option value='0'");
+    if (!cfg.led) h += F(" selected");
+    h += F(">Off</option></select></label>");
     h += F("<button type='submit'>Save &amp; reboot</button></form>"
            "<script>function t(){document.getElementById('st').style.display="
            "document.getElementById('dhcp').value=='1'?'none':'block'}t()</script>"
@@ -239,6 +247,7 @@ class ConfigPortal {
     topic.trim();
     copy(cfg.topic, sizeof(cfg.topic), topic.length() ? topic : String(PORTAL_DEFAULT_TOPIC));
     cfg.useDhcp = dhcp;
+    cfg.led = web.arg("led") != "0";
     copy(cfg.ip, sizeof(cfg.ip), web.arg("ip"));
     copy(cfg.gw, sizeof(cfg.gw), web.arg("gw"));
     copy(cfg.mask, sizeof(cfg.mask), web.arg("mask"));

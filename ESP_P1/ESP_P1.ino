@@ -13,12 +13,8 @@
 // ─── Setup ────────────────────────────────────────────────────────────────────
 
 void setup() {
-  pinMode(REQ_PIN, OUTPUT);
-
-#if defined(ESP8266)
-  pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, HIGH);  // active low
-#endif
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LED_OFF);
 
   Serial.begin(115200);
 
@@ -132,17 +128,40 @@ void UpdateValues() {
 
   if (mqttClient.connected()) {
     bool ok = mqttClient.publish(portal.cfg.topic, jsonPayload, true);  // retain=true
+    publishFailed = !ok;
     Serial.print("MQTT publish ");
     Serial.println(ok ? "OK" : "FAILED");
   } else {
     Serial.println("MQTT not connected, skipping publish.");
   }
+}
 
-#if defined(ESP8266)
-#if defined(USE_LED)
-  digitalWrite(LED_BUILTIN, HIGH);
-#endif
-#endif
+// ─── Status LED ───────────────────────────────────────────────────────────────
+
+// Request a short blink; shown by ledService() (non-blocking)
+void ledPulse() {
+  ledPulsing = true;
+  ledOnAt = millis();
+}
+
+// Error = no WiFi, no MQTT connection / last publish failed, or no valid telegram for DATA_TIMEOUT_MS
+bool hasError() {
+  if (WiFi.status() != WL_CONNECTED) return true;
+  if (!mqttClient.connected() || publishFailed) return true;
+  if (!haveTelegram || millis() - lastTelegramAt > DATA_TIMEOUT_MS) return true;
+  return false;
+}
+
+// Call from loop(): error -> LED solid on; otherwise short blink per telegram.
+// If the LED is disabled in the setup hotspot it stays off (also in error state).
+void ledService() {
+  if (ledPulsing && millis() - ledOnAt >= LED_BLINK_MS) ledPulsing = false;
+
+  bool want = portal.cfg.led && (hasError() || ledPulsing);
+  if (want != ledLit) {
+    digitalWrite(LED_PIN, want ? LED_ON : LED_OFF);
+    ledLit = want;
+  }
 }
 
 // ─── Parsing helpers ──────────────────────────────────────────────────────────
@@ -298,7 +317,6 @@ void readTelegram() {
   if (!Serial.available()) return;
 #endif
 
-  digitalWrite(REQ_PIN, LOW);
   memset(telegram, 0, sizeof(telegram));
 
 #if defined(ESP32)
@@ -311,7 +329,12 @@ void readTelegram() {
     telegram[len]     = '\n';
     telegram[len + 1] = 0;
     yield();
-    if (decodeTelegram(len + 1)) UpdateValues();
+    if (decodeTelegram(len + 1)) {  // complete telegram with valid CRC
+      haveTelegram = true;
+      lastTelegramAt = millis();
+      ledPulse();
+      UpdateValues();
+    }
   }
 }
 
@@ -331,18 +354,8 @@ void loop() {
     wifiDownSince = 0;
   }
 
-  currentTime = millis();
-  if ((currentTime - lastTime) >= period) {
-    lastTime = currentTime;
-    digitalWrite(REQ_PIN, HIGH);
-#if defined(ESP8266)
-#if defined(USE_LED)
-    digitalWrite(LED_BUILTIN, LOW);
-#endif
-#endif
-  }
-
   readTelegram();
+  ledService();
 
   if (WiFi.status() == WL_CONNECTED && !mqttClient.connected()) {
     mqttConnect();

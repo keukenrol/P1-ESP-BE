@@ -28,10 +28,19 @@ ESP8266WebServer server(80);
 
 /* EDIT FOLLOWING ITEMS ========================== */
 
-//#define USE_LED 1  // comment out if you don't want the LED to flash on publish
-
-#define REQ_PIN 2        // GPIO2 -> ESP01S / ESP8266 D3 / ESP32 firebeetle
-#define TIME_INTERVAL 1  // read interval in seconds
+// Status LED: short blink on every valid telegram. On/off is a setting in the setup hotspot.
+// Request pin is no longer used (DATA REQUEST is tied to 5V on the board).
+#if defined(ESP8266)
+#define LED_PIN 2      // ESP-01S onboard LED (GPIO2), active low
+#define LED_ON  LOW
+#define LED_OFF HIGH
+#else
+#define LED_PIN 2      // ESP32 firebeetle onboard LED, active high
+#define LED_ON  HIGH
+#define LED_OFF LOW
+#endif
+#define LED_BLINK_MS 60
+#define DATA_TIMEOUT_MS 10000UL  // no valid telegram for this long -> error (LED solid on)
 
 // WiFi / IP / MQTT server+port+topic are no longer set here:
 // they are entered through the setup hotspot (see ConfigPortal.h) and stored in flash.
@@ -84,10 +93,13 @@ char prevJsonPayload[JSONLENGTH] = "";  // empty so first real telegram always p
 
 const bool outputOnSerial = false;
 unsigned int  currentCRC = 0;
-unsigned long currentTime = 0;
-unsigned long lastTime    = 0;
-const unsigned long period = TIME_INTERVAL * 1000;
 unsigned long lastMqttRetry  = 0;
+bool          ledLit = false;       // LED physically on
+bool          ledPulsing = false;   // a telegram blink is in progress
+unsigned long ledOnAt = 0;
+bool          haveTelegram = false; // at least one valid telegram received
+unsigned long lastTelegramAt = 0;
+bool          publishFailed = false;
 
 WiFiClient   wifiClient;
 PubSubClient mqttClient(wifiClient);
