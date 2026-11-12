@@ -35,6 +35,10 @@ void setupWifi() {
   // Joins the saved network; if there is no config or the join fails, this starts the
   // setup hotspot and does not return until the user saved settings (device then reboots).
   portal.begin();
+  // announce as <hostname>.local (mDNS)
+  if (MDNS.begin(portal.cfg.hostname)) MDNS.addService("http", "tcp", 80);
+  Serial.print("Hostname: ");
+  Serial.println(portal.cfg.hostname);
   Serial.print("Wi-Fi connected! IP: ");
   Serial.println(WiFi.localIP());
 }
@@ -68,6 +72,7 @@ void mqttConnect() {
 void setupWebServer() {
   server.on("/", handleRoot);
   server.on("/p1_data", data_web);
+  portal.registerRoutes(server);  // adds /config (settings form) and /save
   server.onNotFound(handleNotFound);
   server.begin();
   Serial.println("Web server started!");
@@ -344,6 +349,9 @@ void loop() {
   server.handleClient();
   mqttClient.loop();
   portal.loopButton();  // hold GPIO0 low for 5 s -> reboot into the setup hotspot
+#if defined(ESP8266)
+  MDNS.update();        // keep answering <hostname>.local queries
+#endif
 
   // WiFi watchdog: after 10 min offline, reboot (comes back up in the portal if the saved network is gone)
   static unsigned long wifiDownSince = 0;

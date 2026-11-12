@@ -40,6 +40,7 @@ const char MAIN_page[] PROGMEM = R"=====(
   </HEAD>
   <BODY>
     <H1>ESP P1 reader</H1>
+    <P><A HREF="/config">Settings</A></P>
     <DIV>
       <table class="styled-table">
         <thead>

@@ -1,10 +1,11 @@
-// ConfigPortal.h - first-boot hotspot + web form (ESP8266 and ESP32)
+// ConfigPortal.h - first-boot hotspot + settings page (ESP8266 and ESP32)
 // Same firmware on every device: no credentials in code.
 //
 //  - No saved config, or WiFi join fails (15 s)  -> open AP "P1-ESP-XXXXXX" + captive portal
-//  - Long-press GPIO0 (5 s) while running        -> reboots into the portal
-//  - Form: WiFi SSID/password, DHCP or static IP (ip/gw/mask/dns), MQTT server/port/topic
-//  - Settings are stored in EEPROM (flash), then the device reboots and joins the network.
+//  - While connected, the same form is available at http://<device>/config
+//  - Long-press GPIO0 (5 s) while running        -> reboots into the hotspot
+//  - Form: hostname, status LED, WiFi SSID/password, DHCP or static IP, MQTT server/port/topic
+//  - Settings are stored in EEPROM (flash), then the device reboots and applies them.
 //
 // NOTE: GPIO0 must be HIGH at power-up/reset (low = flash mode). That is why the
 // button is only evaluated while the sketch is running (loopButton), not at boot.
@@ -37,7 +38,8 @@ struct NetConfig {
   char     gw[16];
   char     mask[16];
   char     dns[16];
-  uint8_t  led;           // 1 = blink LED on every telegram (kept last so older saved configs stay valid)
+  uint8_t  led;           // 1 = status LED enabled
+  char     hostname[33];  // DHCP/mDNS hostname (fields appended at the end keep older saved configs valid)
 };
 
 class ConfigPortal {
@@ -60,6 +62,12 @@ class ConfigPortal {
     if (valid && connectSta(staTimeoutMs)) return true;
     runPortal();
     return false;
+  }
+
+  // Add /config (form) and /save (POST) to an existing web server, e.g. the main one.
+  void registerRoutes(PortalWebServer& ws) {
+    ws.on("/config", HTTP_GET, [this, &ws]() { sendConfigPage(ws); });
+    ws.on("/save", HTTP_POST, [this, &ws]() { handleSave(ws); });
   }
 
   // Call from loop(): holding the button for holdMs reboots into the portal.
@@ -91,13 +99,16 @@ class ConfigPortal {
       cfg.port = 1883;
       cfg.led = 1;
       strcpy(cfg.topic, PORTAL_DEFAULT_TOPIC);
+      strcpy(cfg.hostname, defaultHost().c_str());
       return false;
     }
-    if (cfg.led > 1) cfg.led = 1;  // field absent in configs saved by an older firmware -> default on
-    cfg.ssid[32] = cfg.pass[64] = cfg.server[64] = cfg.topic[64] = 0;
+    cfg.ssid[32] = cfg.pass[64] = cfg.server[64] = cfg.topic[64] = cfg.hostname[32] = 0;
     cfg.ip[15] = cfg.gw[15] = cfg.mask[15] = cfg.dns[15] = 0;
     if (!cfg.topic[0]) strcpy(cfg.topic, PORTAL_DEFAULT_TOPIC);
     if (!cfg.port) cfg.port = 1883;
+    if (cfg.led > 1) cfg.led = 1;  // absent in configs saved by an older firmware -> default on
+    String h(cfg.hostname);
+    if (!h.length() || cleanHost(h) != h) strcpy(cfg.hostname, defaultHost().c_str());  // absent/garbage -> default
     return true;
   }
 
@@ -115,6 +126,7 @@ class ConfigPortal {
   bool     pressed = false;
   uint32_t pressedAt = 0;
   uint32_t lastActivity = 0;
+  bool     inPortal = false;
 
   uint32_t chipId() {
 #if defined(ESP32)
@@ -124,9 +136,37 @@ class ConfigPortal {
 #endif
   }
 
+  String defaultHost() {
+    String h = deviceId();
+    h.toLowerCase();
+    return h;  // e.g. p1-esp-a1b2c3
+  }
+
+  // hostname rules: a-z 0-9 '-', no leading/trailing '-', max 32 chars
+  static String cleanHost(String s) {
+    s.trim();
+    s.toLowerCase();
+    String o;
+    for (unsigned i = 0; i < s.length() && o.length() < 32; i++) {
+      char c = s[i];
+      if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-') o += c;
+    }
+    while (o.length() && o[0] == '-') o.remove(0, 1);
+    while (o.length() && o[o.length() - 1] == '-') o.remove(o.length() - 1);
+    return o;
+  }
+
   bool connectSta(uint32_t timeoutMs) {
     WiFi.persistent(false);
+#if defined(ESP32)
+    WiFi.setHostname(cfg.hostname);  // before mode (older cores) ...
+#endif
     WiFi.mode(WIFI_STA);
+#if defined(ESP32)
+    WiFi.setHostname(cfg.hostname);  // ... and after (newer cores)
+#else
+    WiFi.hostname(cfg.hostname);
+#endif
     if (!cfg.useDhcp) {
       IPAddress ip, gw, mask, d;
       if (ip.fromString(cfg.ip) && gw.fromString(cfg.gw) && mask.fromString(cfg.mask)) {
@@ -167,16 +207,24 @@ class ConfigPortal {
     return s;
   }
 
-  void handleRoot() {
+  void sendConfigPage(PortalWebServer& ws) {
     lastActivity = millis();
     String h = F("<!doctype html><html><head><meta charset='utf-8'>"
                  "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-                 "<title>P1 ESP setup</title><style>"
+                 "<title>P1 ESP settings</title><style>"
                  "body{font-family:sans-serif;max-width:420px;margin:1em auto;padding:0 1em}"
                  "label{display:block;margin:.7em 0}input,select{width:100%;padding:.5em;box-sizing:border-box}"
                  "small{color:#666}button{padding:.7em 1.2em;margin-top:1em}</style></head><body>"
-                 "<h2>P1 ESP setup</h2><form method='POST' action='/save'>"
-                 "<h3>WiFi</h3>");
+                 "<h2>P1 ESP settings</h2>");
+    if (!inPortal) h += F("<p><a href='/'>&larr; Back to readings</a></p>");
+    h += F("<form method='POST' action='/save'><h3>Device</h3>");
+    h += field("Hostname", "hostname", cfg.hostname, "maxlength='32' pattern='[A-Za-z0-9\\-]+'");
+    h += F("<small>Reachable as hostname.local on most networks</small>");
+    h += F("<label>Status LED<select name='led'><option value='1'");
+    if (cfg.led) h += F(" selected");
+    h += F(">On (blink per telegram, solid on error)</option><option value='0'");
+    if (!cfg.led) h += F(" selected");
+    h += F(">Off</option></select></label><h3>WiFi</h3>");
     h += F("<label>Network (SSID)<input name='ssid' list='nets' maxlength='32' required value=\"");
     h += esc(cfg.ssid);
     h += F("\"></label><datalist id='nets'>");
@@ -201,16 +249,11 @@ class ConfigPortal {
     h += field("Server (host or IP)", "server", cfg.server, "maxlength='64' required");
     h += field("Port", "port", String(cfg.port).c_str(), "type='number' min='1' max='65535'");
     h += field("Topic", "topic", cfg.topic, "maxlength='64'");
-    h += F("<h3>Status LED</h3><label>Blink on every telegram<select name='led'><option value='1'");
-    if (cfg.led) h += F(" selected");
-    h += F(">On</option><option value='0'");
-    if (!cfg.led) h += F(" selected");
-    h += F(">Off</option></select></label>");
     h += F("<button type='submit'>Save &amp; reboot</button></form>"
            "<script>function t(){document.getElementById('st').style.display="
            "document.getElementById('dhcp').value=='1'?'none':'block'}t()</script>"
            "</body></html>");
-    web.send(200, "text/html", h);
+    ws.send(200, "text/html", h);
   }
 
   static void copy(char* dst, size_t sz, const String& v) {
@@ -218,58 +261,71 @@ class ConfigPortal {
     dst[sz - 1] = 0;
   }
 
-  void handleSave() {
+  void handleSave(PortalWebServer& ws) {
     lastActivity = millis();
-    String ssid = web.arg("ssid");
-    String server = web.arg("server");
+    String ssid = ws.arg("ssid");
+    String server = ws.arg("server");
     ssid.trim();
     server.trim();
     if (!ssid.length() || !server.length()) {
-      web.send(400, "text/plain", "SSID and server are required");
+      ws.send(400, "text/plain", "SSID and server are required");
       return;
     }
-    bool dhcp = web.arg("dhcp") != "0";
+    bool dhcp = ws.arg("dhcp") != "0";
     if (!dhcp) {
       IPAddress t;
-      if (!t.fromString(web.arg("ip")) || !t.fromString(web.arg("gw")) || !t.fromString(web.arg("mask"))) {
-        web.send(400, "text/plain", "Invalid static IP, gateway or mask");
+      if (!t.fromString(ws.arg("ip")) || !t.fromString(ws.arg("gw")) || !t.fromString(ws.arg("mask"))) {
+        ws.send(400, "text/plain", "Invalid static IP, gateway or mask");
         return;
       }
     }
     // keep the old password if the field is left blank and the SSID is unchanged
-    String np = web.arg("pass");
+    String np = ws.arg("pass");
     if (np.length() || ssid != String(cfg.ssid)) copy(cfg.pass, sizeof(cfg.pass), np);
     copy(cfg.ssid, sizeof(cfg.ssid), ssid);
     copy(cfg.server, sizeof(cfg.server), server);
-    long p = web.arg("port").toInt();
+    long p = ws.arg("port").toInt();
     cfg.port = (p >= 1 && p <= 65535) ? (uint16_t)p : 1883;
-    String topic = web.arg("topic");
+    String topic = ws.arg("topic");
     topic.trim();
     copy(cfg.topic, sizeof(cfg.topic), topic.length() ? topic : String(PORTAL_DEFAULT_TOPIC));
+    String host = cleanHost(ws.arg("hostname"));
+    copy(cfg.hostname, sizeof(cfg.hostname), host.length() ? host : defaultHost());
     cfg.useDhcp = dhcp;
-    cfg.led = web.arg("led") != "0";
-    copy(cfg.ip, sizeof(cfg.ip), web.arg("ip"));
-    copy(cfg.gw, sizeof(cfg.gw), web.arg("gw"));
-    copy(cfg.mask, sizeof(cfg.mask), web.arg("mask"));
-    copy(cfg.dns, sizeof(cfg.dns), web.arg("dns"));
+    cfg.led = ws.arg("led") != "0";
+    copy(cfg.ip, sizeof(cfg.ip), ws.arg("ip"));
+    copy(cfg.gw, sizeof(cfg.gw), ws.arg("gw"));
+    copy(cfg.mask, sizeof(cfg.mask), ws.arg("mask"));
+    copy(cfg.dns, sizeof(cfg.dns), ws.arg("dns"));
     cfg.forcePortal = 0;
     save();
-    web.send(200, "text/html",
-             F("<meta name='viewport' content='width=device-width,initial-scale=1'>"
-               "<h3>Saved.</h3><p>The device is rebooting and will join your network.</p>"));
+
+    String r = F("<meta name='viewport' content='width=device-width,initial-scale=1'>"
+                 "<h3>Saved.</h3><p>The device is rebooting and will join your network. "
+                 "Open it again in about 20 seconds at <b>http://");
+    r += esc(cfg.hostname);
+    r += F(".local/</b>");
+    if (!cfg.useDhcp) {
+      r += F(" or <b>http://");
+      r += esc(cfg.ip);
+      r += F("/</b>");
+    }
+    r += F(".</p>");
+    ws.send(200, "text/html", r);
     delay(1500);
     ESP.restart();
   }
 
   void runPortal() {
+    inPortal = true;
     WiFi.persistent(false);
     WiFi.mode(WIFI_AP_STA);   // STA side is needed for scanning
     WiFi.scanNetworks(true);  // async
     WiFi.softAP(deviceId().c_str());  // open AP; pass a 2nd arg (min 8 chars) for a password
 
     dns.start(53, "*", WiFi.softAPIP());  // captive portal: every name resolves to us
-    web.on("/", [this]() { handleRoot(); });
-    web.on("/save", HTTP_POST, [this]() { handleSave(); });
+    web.on("/", [this]() { sendConfigPage(web); });
+    registerRoutes(web);
     web.onNotFound([this]() {  // phones probe random URLs; send them to the form
       web.sendHeader("Location", String("http://") + WiFi.softAPIP().toString() + "/", true);
       web.send(302, "text/plain", "");
