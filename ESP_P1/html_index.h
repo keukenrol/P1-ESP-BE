@@ -79,7 +79,7 @@ const char MAIN_page[] PROGMEM = R"=====(
       </table>
     </DIV>
     <SCRIPT>
-      setInterval(getData, 3000);
+      setInterval(getData, 1000);
       getData();
 
       function getData() {
